@@ -4,8 +4,8 @@
 
 namespace Hyprgraphics {
     struct SAsyncResourceImpl {
-        Hyprutils::Memory::CUniquePointer<std::condition_variable> awaitingCv;
-        std::mutex                                                 awaitingMtx;
-        bool                                                       awaitingEvent = false;
+        std::mutex              awaitingMtx;
+        std::condition_variable awaitingCv;
+        bool                    awaitingEvent = false; // guarded by awaitingMtx
     };
 }

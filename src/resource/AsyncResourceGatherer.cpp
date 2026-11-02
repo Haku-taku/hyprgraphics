@@ -30,10 +30,9 @@ void CAsyncResourceGatherer::enqueue(Hyprutils::Memory::CAtomicSharedPointer<IAs
 }
 
 void CAsyncResourceGatherer::await(Hyprutils::Memory::CAtomicSharedPointer<IAsyncResource> resource) {
-    resource->m_impl->awaitingCv = Hyprutils::Memory::makeUnique<std::condition_variable>();
+    // Predicate is read under the mutex; the worker sets it under the same mutex, so no lost wakeup.
     std::unique_lock<std::mutex> lk(resource->m_impl->awaitingMtx);
-    resource->m_impl->awaitingCv->wait(lk, [&resource] { return resource->m_impl->awaitingEvent; });
-    resource->m_impl->awaitingCv.reset();
+    resource->m_impl->awaitingCv.wait(lk, [&resource] { return resource->m_impl->awaitingEvent; });
 }
 
 void CAsyncResourceGatherer::asyncAssetSpinLock() {
@@ -64,11 +63,14 @@ void CAsyncResourceGatherer::asyncAssetSpinLock() {
         for (auto& r : requests) {
             r->render();
 
-            if (r->m_impl->awaitingCv) {
+            // Publish under the mutex before notifying: a waiter that arrives late still sees the flag.
+            {
+                std::scoped_lock lg(r->m_impl->awaitingMtx);
+                r->m_ready               = true;
                 r->m_impl->awaitingEvent = true;
-                r->m_impl->awaitingCv->notify_all();
             }
-            r->m_ready = true;
+
+            r->m_impl->awaitingCv.notify_all();
             r->m_events.finished.emit();
         }
     }

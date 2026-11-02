@@ -138,6 +138,17 @@ add_test(
   COMMAND hyprgraphics_arg "image")
 add_dependencies(tests hyprgraphics_arg)
 
+find_package(Threads REQUIRED)
+add_executable(hyprgraphics_await_race "tests/await_race.cpp")
+target_link_libraries(
+  hyprgraphics_await_race
+  PRIVATE hyprgraphics
+          PkgConfig::deps
+          Threads::Threads)
+add_test(NAME "AwaitRace" COMMAND hyprgraphics_await_race)
+set_tests_properties("AwaitRace" PROPERTIES TIMEOUT 60)
+add_dependencies(tests hyprgraphics_await_race)
+
 # Installation
 install(TARGETS hyprgraphics)
 install(DIRECTORY "include/hyprgraphics"
