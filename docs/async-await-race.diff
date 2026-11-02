@@ -1,0 +1,53 @@
+diff --git a/src/resource/AsyncResourceGatherer.cpp b/src/resource/AsyncResourceGatherer.cpp
+index 7e3e7de..9be0c80 100644
+--- a/src/resource/AsyncResourceGatherer.cpp
++++ b/src/resource/AsyncResourceGatherer.cpp
+@@ -30,10 +30,9 @@ void CAsyncResourceGatherer::enqueue(Hyprutils::Memory::CAtomicSharedPointer<IAs
+ }
+ 
+ void CAsyncResourceGatherer::await(Hyprutils::Memory::CAtomicSharedPointer<IAsyncResource> resource) {
+-    resource->m_impl->awaitingCv = Hyprutils::Memory::makeUnique<std::condition_variable>();
++    // Predicate is read under the mutex; the worker sets it under the same mutex, so no lost wakeup.
+     std::unique_lock<std::mutex> lk(resource->m_impl->awaitingMtx);
+-    resource->m_impl->awaitingCv->wait(lk, [&resource] { return resource->m_impl->awaitingEvent; });
+-    resource->m_impl->awaitingCv.reset();
++    resource->m_impl->awaitingCv.wait(lk, [&resource] { return resource->m_impl->awaitingEvent; });
+ }
+ 
+ void CAsyncResourceGatherer::asyncAssetSpinLock() {
+@@ -64,11 +63,14 @@ void CAsyncResourceGatherer::asyncAssetSpinLock() {
+         for (auto& r : requests) {
+             r->render();
+ 
+-            if (r->m_impl->awaitingCv) {
++            // Publish under the mutex before notifying: a waiter that arrives late still sees the flag.
++            {
++                std::scoped_lock lg(r->m_impl->awaitingMtx);
++                r->m_ready               = true;
+                 r->m_impl->awaitingEvent = true;
+-                r->m_impl->awaitingCv->notify_all();
+             }
+-            r->m_ready = true;
++
++            r->m_impl->awaitingCv.notify_all();
+             r->m_events.finished.emit();
+         }
+     }
+diff --git a/src/resource/resources/AsyncResource.hpp b/src/resource/resources/AsyncResource.hpp
+index 8a0c61b..f2873f2 100644
+--- a/src/resource/resources/AsyncResource.hpp
++++ b/src/resource/resources/AsyncResource.hpp
+@@ -4,8 +4,8 @@
+ 
+ namespace Hyprgraphics {
+     struct SAsyncResourceImpl {
+-        Hyprutils::Memory::CUniquePointer<std::condition_variable> awaitingCv;
+-        std::mutex                                                 awaitingMtx;
+-        bool                                                       awaitingEvent = false;
++        std::mutex              awaitingMtx;
++        std::condition_variable awaitingCv;
++        bool                    awaitingEvent = false; // guarded by awaitingMtx
+     };
+-}
+\ No newline at end of file
++}
